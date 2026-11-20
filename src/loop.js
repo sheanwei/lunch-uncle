@@ -9,32 +9,33 @@ const LLM_TIMEOUT_MS = 20_000;
 const MAX_ROUNDS = 8;
 
 const FALLBACK_REPLY = "Just go Berseh Food Centre lah.";
-const FOOD_WORDS = /\b(eat|lunch|food|makan|hungry|restaurant|hawker)\b/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Run the agentic loop for one user turn and return Uncle's reply.
  *
  * history is the prior conversation as OpenAI-style {role, content} messages.
+ * sessionId is the client's conversation id; it is reused on every turn so the
+ * OpenCode Go endpoint can route and cache the whole conversation together.
  */
-export async function runLoop(history, message, env) {
+export async function runLoop(history, message, env, sessionId) {
   // If the Places key is missing, Uncle cannot search, so give a safe answer.
-  if (!env.GOOGLE_PLACES_API_KEY || FOOD_WORDS.test(message)) {
+  if (!env.GOOGLE_PLACES_API_KEY) {
     return FALLBACK_REPLY;
   }
 
   const messages = [
     { role: "system", content: buildSystemPrompt() },
     ...history,
-    { role: "user", content: message },
+    { role: "user", content: buildUserMessage(message, new Date()) },
   ];
 
-  // One session id per turn, shared by every model call in this loop run,
-  // so the OpenCode Go endpoint can route and cache consistently.
-  const sessionId = crypto.randomUUID();
+  const session = resolveSessionId(sessionId);
 
   let round = 0;
   while (round < MAX_ROUNDS) {
-    const assistant = await callModel(messages, env, sessionId);
+    const assistant = await callModel(messages, env, session);
     messages.push(assistant);
 
     const toolCalls = assistant.tool_calls ?? [];
@@ -52,6 +53,7 @@ export async function runLoop(history, message, env) {
         content: result,
       });
     }
+    round++;
   }
 
   return "Uncle tried too many times already. Ask something simpler.";
@@ -79,6 +81,32 @@ async function callModel(messages, env, sessionId) {
 
   const data = await res.json();
   return data.choices[0].message;
+}
+
+/**
+ * Use the client's session id if it is a UUID, otherwise make a new one.
+ */
+export function resolveSessionId(raw) {
+  return typeof raw === "string" && UUID_RE.test(raw)
+    ? raw
+    : crypto.randomUUID();
+}
+
+/**
+ * Put the current Singapore time on the newest user message. The time lives
+ * here, not in the system prompt, so the prompt prefix stays identical across
+ * turns and the provider can cache it.
+ */
+export function buildUserMessage(message, now) {
+  const time = now.toLocaleString("en-SG", {
+    timeZone: "Asia/Singapore",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `[Now: ${time}, Singapore]\n${message}`;
 }
 
 function parseArgs(raw) {

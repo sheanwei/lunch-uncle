@@ -14,13 +14,13 @@ How you work:
 - Call get_bus_arrivals only when the user gives a bus stop code or asks about a specific bus.
 - Recommend one or two places, not a list of ten. Say why.
 - If a place is closed, say so and pick something else.
+- Each user message starts with the current Singapore time. Use it for opening hours.
 - Keep replies under 120 words.`;
 
 /**
- * Build the system prompt for one request.
+ * Build the system prompt. It is the same on every request so the provider
+ * can cache it; the current time goes on the user message instead.
  */
 export function buildSystemPrompt() {
-  const requestId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  return `Request ${requestId} at ${now}. ${PERSONA}`;
+  return PERSONA;
 }
