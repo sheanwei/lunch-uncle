@@ -76,11 +76,22 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ history, message, sessionId }),
         });
-        const data = await res.json();
-        const reply = data.reply ?? data.error ?? "No reply.";
-        thinking.textContent = reply;
-        history.push({ role: "user", content: message });
-        history.push({ role: "assistant", content: reply });
+        let data = null;
+        try {
+          data = await res.json();
+        } catch {
+          // Not JSON, e.g. a Cloudflare error page.
+        }
+        if (res.ok && typeof data?.reply === "string") {
+          thinking.textContent = data.reply;
+          // Only real replies go into history; errors would be replayed to
+          // the model as if Uncle had said them.
+          history.push({ role: "user", content: message });
+          history.push({ role: "assistant", content: data.reply });
+        } else {
+          thinking.textContent =
+            data?.error ?? `Uncle got problem (error ${res.status}). Try again.`;
+        }
       } catch (err) {
         thinking.textContent = "Cannot reach Uncle. Try again.";
       } finally {

@@ -6,9 +6,11 @@ const LLM_BASE_URL = "TODO";
 const LLM_MODEL = "TODO";
 
 const LLM_TIMEOUT_MS = 20_000;
+const LLM_MAX_TOKENS = 1000;
 const MAX_ROUNDS = 8;
+// Each Places search is billed, so cap tool calls across the whole turn.
+export const MAX_TOOL_CALLS_PER_TURN = 6;
 
-const FALLBACK_REPLY = "Just go Berseh Food Centre lah.";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -37,13 +39,17 @@ export function configProblems(baseUrl, model, env) {
   if (!env.OPENCODE_API_KEY) {
     problems.push("OPENCODE_API_KEY is not set (README step 3 or 6)");
   }
+  if (!env.GOOGLE_PLACES_API_KEY) {
+    problems.push("GOOGLE_PLACES_API_KEY is not set (README step 3 or 6)");
+  }
   return problems;
 }
 
 /**
  * Run the agentic loop for one user turn and return Uncle's reply.
  *
- * history is the prior conversation as OpenAI-style {role, content} messages.
+ * history is the prior conversation as OpenAI-style {role, content} messages,
+ * already checked by validateChatRequest.
  * sessionId is the client's conversation id; it is reused on every turn so the
  * OpenCode Go endpoint can route and cache the whole conversation together.
  */
@@ -53,12 +59,6 @@ export async function runLoop(history, message, env, sessionId) {
     throw new ConfigError(problems);
   }
 
-  // If the Places key is missing, Uncle cannot search, so give a safe answer.
-  if (!env.GOOGLE_PLACES_API_KEY) {
-    console.warn("GOOGLE_PLACES_API_KEY is not set; returning fallback reply");
-    return FALLBACK_REPLY;
-  }
-
   const messages = [
     { role: "system", content: buildSystemPrompt() },
     ...history,
@@ -66,6 +66,8 @@ export async function runLoop(history, message, env, sessionId) {
   ];
 
   const session = resolveSessionId(sessionId);
+  const toolCache = new Map();
+  let toolCallsUsed = 0;
 
   let round = 0;
   while (round < MAX_ROUNDS) {
@@ -77,15 +79,27 @@ export async function runLoop(history, message, env, sessionId) {
       return assistant.content ?? "";
     }
 
+    // Every tool call must get a tool message back, even ones we refuse.
     for (const call of toolCalls) {
-      const args = parseArgs(call.function.arguments);
-      console.log(`round ${round}: ${call.function.name}`, args);
-      const result = await executeTool(call.function.name, args, env);
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: result,
-      });
+      const name = call.function?.name;
+      const args = parseArgs(call.function?.arguments);
+      const cacheKey = `${name}:${JSON.stringify(args)}`;
+
+      let result;
+      if (toolCache.has(cacheKey)) {
+        result = toolCache.get(cacheKey);
+      } else if (toolCallsUsed >= MAX_TOOL_CALLS_PER_TURN) {
+        result = JSON.stringify({
+          error: "Tool limit reached for this question. Answer with what you have.",
+        });
+      } else {
+        toolCallsUsed++;
+        console.log(`round ${round}: ${name}`, args);
+        result = await executeTool(name, args, env);
+        toolCache.set(cacheKey, result);
+      }
+
+      messages.push({ role: "tool", tool_call_id: call.id, content: result });
     }
     round++;
   }
@@ -105,6 +119,7 @@ async function callModel(messages, env, sessionId) {
       model: LLM_MODEL,
       messages,
       tools: toolDefinitions,
+      max_tokens: LLM_MAX_TOKENS,
     }),
     signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
   });
@@ -113,8 +128,23 @@ async function callModel(messages, env, sessionId) {
     throw new Error(`LLM returned ${res.status}: ${await res.text()}`);
   }
 
-  const data = await res.json();
-  return data.choices[0].message;
+  return assistantFromResponse(await res.json());
+}
+
+/**
+ * Pull the assistant message out of a chat completions response, keeping only
+ * the fields we send back on the next round. Throws on a malformed response.
+ */
+export function assistantFromResponse(data) {
+  const message = data?.choices?.[0]?.message;
+  if (!message || typeof message !== "object") {
+    throw new Error(`LLM response has no message: ${JSON.stringify(data)}`);
+  }
+  const assistant = { role: "assistant", content: message.content ?? null };
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    assistant.tool_calls = message.tool_calls;
+  }
+  return assistant;
 }
 
 /**
@@ -143,9 +173,16 @@ export function buildUserMessage(message, now) {
   return `[Now: ${time}, Singapore]\n${message}`;
 }
 
-function parseArgs(raw) {
+/**
+ * Parse tool-call arguments. Anything that is not a JSON object (bad JSON,
+ * "null", "[]", "5") becomes {} so tools can safely destructure it.
+ */
+export function parseArgs(raw) {
   try {
-    return JSON.parse(raw || "{}");
+    const parsed = JSON.parse(raw || "{}");
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
   } catch {
     return {};
   }

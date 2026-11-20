@@ -15,6 +15,8 @@ const SEARCH_RADIUS_METRES = 800;
 export const MAX_WALK_METRES = 1500;
 const MAX_PLACES = 10;
 const FORECAST_AREA = "Kallang";
+// A slow API should cost Uncle one tool result, not the whole reply.
+const TOOL_TIMEOUT_MS = 8_000;
 
 const PLACES_URL = "https://places.googleapis.com/v1/places:searchText";
 const FORECAST_URL =
@@ -84,17 +86,24 @@ export const toolDefinitions = [
 
 /**
  * Run one tool call requested by the model and return the result as a string.
+ * Never throws: a failed or timed-out tool becomes an {error} result the model
+ * can work around, instead of failing the whole reply.
  */
 export async function executeTool(name, args, env) {
-  switch (name) {
-    case "find_lunch_places":
-      return JSON.stringify(await findLunchPlaces(args, env));
-    case "get_rain_forecast":
-      return JSON.stringify(await getRainForecast());
-    case "get_bus_arrivals":
-      return JSON.stringify(await getBusArrivals(args));
-    default:
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+  try {
+    switch (name) {
+      case "find_lunch_places":
+        return JSON.stringify(await findLunchPlaces(args, env));
+      case "get_rain_forecast":
+        return JSON.stringify(await getRainForecast());
+      case "get_bus_arrivals":
+        return JSON.stringify(await getBusArrivals(args));
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+  } catch (err) {
+    console.error(`tool ${name} failed:`, err);
+    return JSON.stringify({ error: `${name} failed: ${err.name}` });
   }
 }
 
@@ -124,6 +133,7 @@ async function findLunchPlaces({ query, open_now = false }, env) {
         "places.id,places.displayName,places.location,places.rating,places.currentOpeningHours",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -171,7 +181,9 @@ export function haversineMetres(a, b) {
 // ---------------------------------------------------------------------------
 
 async function getRainForecast() {
-  const res = await fetch(FORECAST_URL);
+  const res = await fetch(FORECAST_URL, {
+    signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+  });
   if (!res.ok) {
     return { error: `Forecast API returned ${res.status}` };
   }
@@ -186,10 +198,13 @@ export function formatForecast(payload, area) {
   if (!item) {
     return { error: "No forecast available" };
   }
-  const entry = item.forecasts.find((f) => f.area === area);
+  const entry = (item.forecasts ?? []).find((f) => f.area === area);
+  if (!entry) {
+    return { error: `No forecast for ${area} right now` };
+  }
   return {
     area,
-    forecast: entry?.forecast ?? "Unknown",
+    forecast: entry.forecast ?? "Unknown",
     valid_period: item.valid_period?.text ?? null,
   };
 }
@@ -200,7 +215,9 @@ export function formatForecast(payload, area) {
 
 async function getBusArrivals({ stop_code }) {
   const url = `${BUS_URL}?id=${encodeURIComponent(stop_code)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+  });
   if (!res.ok) {
     return { error: `Bus API returned ${res.status}` };
   }
