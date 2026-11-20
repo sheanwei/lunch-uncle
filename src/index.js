@@ -1,5 +1,5 @@
 import ui from "./ui.html";
-import { runLoop } from "./loop.js";
+import { runLoop, ConfigError } from "./loop.js";
 
 export default {
   async fetch(request, env) {
@@ -37,6 +37,9 @@ async function handleChat(request, env) {
     return json({ reply });
   } catch (err) {
     console.error("chat failed:", err);
+    if (err instanceof ConfigError) {
+      return json({ error: err.message }, 500);
+    }
     return json({ error: "Uncle cannot think right now, try again later." }, 500);
   }
 }

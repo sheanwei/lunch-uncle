@@ -13,6 +13,34 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Thrown when the Worker is not set up yet. Its message names the missing
+ * settings (never their values), so it is safe to show to the user.
+ */
+export class ConfigError extends Error {
+  constructor(problems) {
+    super(`Uncle is not set up yet: ${problems.join("; ")}.`);
+    this.name = "ConfigError";
+  }
+}
+
+/**
+ * List setup steps that were skipped. Empty when everything is in place.
+ */
+export function configProblems(baseUrl, model, env) {
+  const problems = [];
+  if (!baseUrl || baseUrl === "TODO") {
+    problems.push("LLM_BASE_URL is not set in src/loop.js (README step 4)");
+  }
+  if (!model || model === "TODO") {
+    problems.push("LLM_MODEL is not set in src/loop.js (README step 4)");
+  }
+  if (!env.OPENCODE_API_KEY) {
+    problems.push("OPENCODE_API_KEY is not set (README step 3 or 6)");
+  }
+  return problems;
+}
+
+/**
  * Run the agentic loop for one user turn and return Uncle's reply.
  *
  * history is the prior conversation as OpenAI-style {role, content} messages.
@@ -20,8 +48,14 @@ const UUID_RE =
  * OpenCode Go endpoint can route and cache the whole conversation together.
  */
 export async function runLoop(history, message, env, sessionId) {
+  const problems = configProblems(LLM_BASE_URL, LLM_MODEL, env);
+  if (problems.length > 0) {
+    throw new ConfigError(problems);
+  }
+
   // If the Places key is missing, Uncle cannot search, so give a safe answer.
   if (!env.GOOGLE_PLACES_API_KEY) {
+    console.warn("GOOGLE_PLACES_API_KEY is not set; returning fallback reply");
     return FALLBACK_REPLY;
   }
 
