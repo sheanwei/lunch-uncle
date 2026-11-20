@@ -10,6 +10,9 @@
 export const CT_HUB_2 = { latitude: 1.3115, longitude: 103.8615 };
 
 const SEARCH_RADIUS_METRES = 800;
+// Places further than this are not walkable for lunch, so drop them even if
+// the Places API returns them (locationBias only prefers nearby results).
+export const MAX_WALK_METRES = 1500;
 const MAX_PLACES = 10;
 const FORECAST_AREA = "Kallang";
 
@@ -100,7 +103,7 @@ export async function executeTool(name, args, env) {
 // ---------------------------------------------------------------------------
 
 async function findLunchPlaces({ query, open_now = false }, env) {
-  const centre = { latitude: 1.3236, longitude: 103.9273 };
+  const centre = CT_HUB_2;
 
   const body = {
     textQuery: query,
@@ -132,14 +135,19 @@ async function findLunchPlaces({ query, open_now = false }, env) {
 }
 
 /**
- * Shape Places API results into the fields Uncle needs.
+ * Shape Places API results into the fields Uncle needs, dropping anything
+ * beyond walking distance (or with no location) from origin.
  */
-export function formatPlaces(places, origin) {
-  return places.map(({ displayName, rating, location }) => ({
-    name: displayName?.text ?? "Unnamed",
-    rating: rating ?? null,
-    distance_m: Math.round(haversineMetres(origin, location)),
-  }));
+export function formatPlaces(places, origin, maxMetres = MAX_WALK_METRES) {
+  return places
+    .filter(({ location }) => location)
+    .map(({ displayName, rating, location, currentOpeningHours }) => ({
+      name: displayName?.text ?? "Unnamed",
+      rating: rating ?? null,
+      distance_m: Math.round(haversineMetres(origin, location)),
+      open_now: currentOpeningHours?.openNow ?? null,
+    }))
+    .filter((place) => place.distance_m <= maxMetres);
 }
 
 /**
