@@ -4,6 +4,8 @@ import {
   formatForecast,
   formatBusArrivals,
   haversineMetres,
+  formatPlaces,
+  CT_HUB_2,
 } from "../src/tools.js";
 
 test("formatForecast picks the requested area", () => {
@@ -54,4 +56,36 @@ test("haversineMetres measures CT Hub 2 to Lavender MRT at under 600 m", () => {
   const lavenderMrt = { latitude: 1.3073, longitude: 103.8631 };
   const distance = haversineMetres(ctHub2, lavenderMrt);
   assert.ok(distance > 400 && distance < 550, `got ${distance}`);
+});
+
+test("formatPlaces keeps nearby places and drops Bedok", () => {
+  const places = [
+    {
+      displayName: { text: "Near Lavender MRT" },
+      rating: 4.2,
+      location: { latitude: 1.3073, longitude: 103.863 },
+      currentOpeningHours: { openNow: true },
+    },
+    {
+      displayName: { text: "Bedok 85" },
+      rating: 4.5,
+      location: { latitude: 1.3236, longitude: 103.9273 },
+      currentOpeningHours: { openNow: true },
+    },
+    { displayName: { text: "No location" } },
+  ];
+  const out = formatPlaces(places, CT_HUB_2);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, "Near Lavender MRT");
+  assert.ok(out[0].distance_m < 600);
+  assert.equal(out[0].open_now, true);
+});
+
+test("formatPlaces reports unknown opening hours as null", () => {
+  const [place] = formatPlaces(
+    [{ displayName: { text: "X" }, location: CT_HUB_2 }],
+    CT_HUB_2,
+  );
+  assert.equal(place.open_now, null);
+  assert.equal(place.distance_m, 0);
 });

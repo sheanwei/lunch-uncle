@@ -48,6 +48,8 @@
 
     // Conversation so far, in the shape the /chat endpoint expects.
     const history = [];
+    // One id for the whole conversation, sent on every turn.
+    const sessionId = crypto.randomUUID();
 
     function addBubble(role, text) {
       const div = document.createElement("div");
@@ -72,7 +74,7 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ history, message }),
+          body: JSON.stringify({ history, message, sessionId }),
         });
         const data = await res.json();
         const reply = data.reply ?? data.error ?? "No reply.";
