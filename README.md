@@ -55,6 +55,8 @@ sequenceDiagram
    npm run deploy
    ```
 
+`POST /chat` is rate limited to 10 requests per minute per IP address by the `CHAT_LIMITER` binding in `wrangler.toml`, because every chat spends LLM and Places quota. Workers in the same Cloudflare account that use the same `namespace_id` share one counter, so give each team's Worker its own number.
+
 Secrets never go in code or in `wrangler.toml`. Local development reads them from `.env`, which is gitignored; production reads them from Cloudflare secrets set with `wrangler secret put`.
 
 ## Running tests

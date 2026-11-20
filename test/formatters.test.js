@@ -89,3 +89,10 @@ test("formatPlaces reports unknown opening hours as null", () => {
   assert.equal(place.open_now, null);
   assert.equal(place.distance_m, 0);
 });
+
+test("formatForecast reports a missing area or forecasts list as an error", () => {
+  const noArea = { data: { items: [{ forecasts: [{ area: "Bedok", forecast: "Fair" }] }] } };
+  assert.match(formatForecast(noArea, "Kallang").error, /Kallang/);
+  const noList = { data: { items: [{}] } };
+  assert.match(formatForecast(noList, "Kallang").error, /Kallang/);
+});
